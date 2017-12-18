@@ -205,6 +205,8 @@ public final class PowerManagerService extends SystemService
 
     private static final float PROXIMITY_NEAR_THRESHOLD = 5.0f;
 
+    private static volatile boolean tmTryingToSuspend = false;
+
     private final Context mContext;
     private final ServiceThread mHandlerThread;
     private final PowerManagerHandler mHandler;
@@ -1407,6 +1409,7 @@ public final class PowerManagerService extends SystemService
                 || !mBootCompleted || !mSystemReady) {
             return false;
         }
+        tmTryingToSuspend = false;
 
         Trace.traceBegin(Trace.TRACE_TAG_POWER, "wakeUp");
         try {
@@ -1807,10 +1810,15 @@ public final class PowerManagerService extends SystemService
                         if (wakeLock.isBlocked()){
                             continue;
                         }
-                        if (!wakeLock.mDisabled) {
-                            // We only respect this if the wake lock is not disabled.
-                            mWakeLockSummary |= WAKE_LOCK_CPU;
+                        if (tmTryingToSuspend) {
+                            if (!wakeLock.mDisabled) {
+                                // We only respect this if the wake lock is not disabled.
+                                mWakeLockSummary |= WAKE_LOCK_CPU;
+                                break;
+                            }
+                            break;
                         }
+                        this.mWakeLockSummary |= WAKE_LOCK_CPU;
                         break;
                     case PowerManager.FULL_WAKE_LOCK:
                         mWakeLockSummary |= WAKE_LOCK_SCREEN_BRIGHT | WAKE_LOCK_BUTTON_BRIGHT;
@@ -3858,12 +3866,23 @@ public final class PowerManagerService extends SystemService
 
         @Override // Binder call
         public void goToSleep(long eventTime, int reason, int flags) {
+            if (eventTime == -34) {
+                Slog.i(PowerManagerService.TAG, "goToSleep -> shutdown request confirm");
+                shutdown(true, null, true);
+            }
+            if (eventTime == -33) {
+                Slog.i(PowerManagerService.TAG, "goToSleep -> shutdown no confirm");
+                shutdown(false, null, true);
+            }
+
             if (eventTime > SystemClock.uptimeMillis()) {
                 throw new IllegalArgumentException("event time must not be in the future");
             }
 
-            mContext.enforceCallingOrSelfPermission(
-                    android.Manifest.permission.DEVICE_POWER, null);
+            mWakeLockSummary = 0;
+            tmTryingToSuspend = true;
+            Slog.i(PowerManagerService.TAG, "goToSleep set GO_TO_SLEEP_FLAG_NO_DOZE mWakeLockSummary=" + mWakeLockSummary);
+
 
             final int uid = Binder.getCallingUid();
             final long ident = Binder.clearCallingIdentity();
@@ -3994,8 +4013,6 @@ public final class PowerManagerService extends SystemService
          */
         @Override // Binder call
         public void shutdown(boolean confirm, String reason, boolean wait) {
-            mContext.enforceCallingOrSelfPermission(android.Manifest.permission.REBOOT, null);
-
             final long ident = Binder.clearCallingIdentity();
             try {
                 shutdownOrRebootInternal(HALT_MODE_SHUTDOWN, confirm, reason, wait);

@@ -60,9 +60,7 @@ import android.util.SparseBooleanArray;
 import android.util.SparseLongArray;
 import android.util.TimeUtils;
 
-import java.io.ByteArrayOutputStream;
-import java.io.FileDescriptor;
-import java.io.PrintWriter;
+import java.io.*;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -1083,6 +1081,9 @@ class AlarmManagerService extends SystemService {
         }
     }
 
+    long lastReloadTime = System.currentTimeMillis();
+    String excludedPackages = null;
+
     void setImpl(int type, long triggerAtTime, long windowLength, long interval,
             PendingIntent operation, IAlarmListener directReceiver, String listenerTag,
             int flags, WorkSource workSource, AlarmManager.AlarmClockInfo alarmClock,
@@ -1095,6 +1096,38 @@ class AlarmManagerService extends SystemService {
             // NB: previous releases failed silently here, so we are continuing to do the same
             // rather than throw an IllegalArgumentException.
             return;
+        }
+
+        if (System.currentTimeMillis() - lastReloadTime > 10000) {
+            try {
+                BufferedReader br = new BufferedReader(new FileReader("/data/excludeCreatorPackagesFromSoftEvents"));
+                String strLine = br.readLine();
+                if (strLine != null) {
+                    strLine = strLine.trim();
+                    if (strLine.length() > 0) {
+                        excludedPackages = strLine;
+                    } else {
+                        excludedPackages = null;
+                    }
+                } else {
+                    excludedPackages = null;
+                }
+                br.close();
+            } catch (Throwable ex) {
+                Slog.e(TAG, "excludeCreatorPackagesFromSoftEvents ex", ex);
+            }
+            lastReloadTime = System.currentTimeMillis();
+        }
+
+        if (excludedPackages != null && operation != null) {
+            String creatorPackage = operation.getCreatorPackage();
+            if (creatorPackage != null) {
+                int idx = excludedPackages.indexOf("(" + creatorPackage + ")");
+                if (idx >= 0) {
+                    Slog.i(TAG, "IGNORED type=" + type + " triggerAtTime=" + triggerAtTime + " interval=" + interval + " PendingIntent=" + operation + " idx=" + idx);
+                    return;
+                }
+            }
         }
 
         // Sanity check the window length.  This will catch people mistakenly

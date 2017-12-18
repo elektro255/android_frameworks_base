@@ -1070,7 +1070,8 @@ class UsbSettingsManager {
 
     public void requestPermission(UsbDevice device, String packageName, PendingIntent pi) {
       Intent intent = new Intent();
-
+      Slog.d("UsbSettingsManager", "requestPermission for device " + device.getDeviceName() + " ###################### tmtmtm");
+      grantDevicePermission(device, Binder.getCallingUid());
         // respond immediately if permission has already been granted
       if (hasPermission(device)) {
             intent.putExtra(UsbManager.EXTRA_DEVICE, device);
